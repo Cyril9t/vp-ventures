@@ -1,0 +1,261 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum StockBatchStatus {
+  ACTIVE
+  FINISHED
+}
+
+enum StockMovementType {
+  PURCHASE
+  SALE
+  ADJUSTMENT_IN
+  ADJUSTMENT_OUT
+  REVERSAL
+}
+
+enum TransactionStatus {
+  COMPLETED
+  CORRECTED
+  VOIDED
+}
+
+enum DebtStatus {
+  OUTSTANDING
+  PARTIALLY_PAID
+  PAID
+  CANCELLED
+}
+
+enum PaymentMethod {
+  CASH
+  TRANSFER
+  CARD
+}
+
+enum PosCategory {
+  POS_SERVICE
+  GAS_PAYMENT
+}
+
+enum PosService {
+  CASH_WITHDRAWAL
+  CARD_WITHDRAWAL
+  CASH_DEPOSIT
+  TRANSFER
+  AIRTIME
+  DATA
+  GAS_PAYMENT
+}
+
+enum AuditEntityType {
+  GAS_SALE
+  POS_TRANSACTION
+  STOCK_BATCH
+  DEBT
+  POS_CHARGE_RULE
+  SETTINGS
+  AUTH
+}
+
+enum AuditAction {
+  CREATE
+  CORRECT
+  VOID
+  ADJUST
+  PAYMENT
+  UPDATE
+  DELETE
+  LOGIN
+}
+
+model User {
+  id                  String     @id @default(cuid())
+  name                String
+  email               String     @unique
+  passwordHash        String
+  forcePasswordChange Boolean    @default(true)
+  createdAt           DateTime   @default(now())
+  updatedAt           DateTime   @updatedAt
+  auditLogs           AuditLog[]
+}
+
+model BusinessSettings {
+  id            String   @id @default("default")
+  businessName  String   @default("VP Ventures")
+  phone         String?
+  address       String?
+  gasPricePerKg Decimal  @default(0) @db.Decimal(14, 2)
+  updatedAt     DateTime @updatedAt
+}
+
+model StockBatch {
+  id                        String              @id @default(cuid())
+  batchNumber               String              @unique
+  purchaseDate              DateTime
+  quantityPurchased         Decimal             @db.Decimal(14, 4)
+  remainingQuantity         Decimal             @db.Decimal(14, 4)
+  costPricePerKg            Decimal             @db.Decimal(14, 2)
+  expectedSellingPricePerKg Decimal             @db.Decimal(14, 2)
+  totalPurchaseCost         Decimal             @db.Decimal(14, 2)
+  status                    StockBatchStatus    @default(ACTIVE)
+  createdAt                 DateTime            @default(now())
+  updatedAt                 DateTime            @updatedAt
+  allocations               GasSaleAllocation[]
+  movements                 StockMovement[]
+
+  @@index([status, purchaseDate])
+  @@index([purchaseDate, createdAt])
+}
+
+model GasSale {
+  id                String              @id @default(cuid())
+  saleNumber        String              @unique
+  customerName      String?
+  customerPhone     String?
+  customerAddress   String?
+  amount            Decimal             @db.Decimal(14, 2)
+  quantityKg        Decimal             @db.Decimal(14, 4)
+  sellingPricePerKg Decimal             @db.Decimal(14, 2)
+  costAmount        Decimal             @db.Decimal(14, 2)
+  grossProfit       Decimal             @db.Decimal(14, 2)
+  cashAmount        Decimal             @default(0) @db.Decimal(14, 2)
+  transferAmount    Decimal             @default(0) @db.Decimal(14, 2)
+  cardAmount        Decimal             @default(0) @db.Decimal(14, 2)
+  debtAmount        Decimal             @default(0) @db.Decimal(14, 2)
+  status            TransactionStatus   @default(COMPLETED)
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  voidedAt          DateTime?
+  voidReason        String?
+  allocations       GasSaleAllocation[]
+  movements         StockMovement[]
+  debt              Debt?
+
+  @@index([createdAt])
+  @@index([status, createdAt])
+  @@index([customerName])
+}
+
+model GasSaleAllocation {
+  id             String     @id @default(cuid())
+  saleId         String
+  stockBatchId   String
+  quantityKg     Decimal    @db.Decimal(14, 4)
+  costPricePerKg Decimal    @db.Decimal(14, 2)
+  costAmount     Decimal    @db.Decimal(14, 2)
+  createdAt      DateTime   @default(now())
+  sale           GasSale    @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  stockBatch     StockBatch @relation(fields: [stockBatchId], references: [id], onDelete: Restrict)
+
+  @@index([saleId])
+  @@index([stockBatchId])
+}
+
+model StockMovement {
+  id            String            @id @default(cuid())
+  stockBatchId  String
+  gasSaleId     String?
+  type          StockMovementType
+  quantityDelta Decimal           @db.Decimal(14, 4)
+  unitCost      Decimal?          @db.Decimal(14, 2)
+  reason        String?
+  reference     String?
+  createdAt     DateTime          @default(now())
+  stockBatch    StockBatch        @relation(fields: [stockBatchId], references: [id], onDelete: Restrict)
+  gasSale       GasSale?          @relation(fields: [gasSaleId], references: [id], onDelete: Restrict)
+
+  @@index([stockBatchId, createdAt])
+  @@index([gasSaleId])
+}
+
+model Debt {
+  id                String        @id @default(cuid())
+  saleId            String        @unique
+  customerName      String
+  customerPhone     String
+  customerAddress   String
+  originalAmount    Decimal       @db.Decimal(14, 2)
+  outstandingAmount Decimal       @db.Decimal(14, 2)
+  status            DebtStatus    @default(OUTSTANDING)
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  sale              GasSale       @relation(fields: [saleId], references: [id], onDelete: Restrict)
+  payments          DebtPayment[]
+
+  @@index([status, updatedAt])
+  @@index([customerName])
+  @@index([customerPhone])
+}
+
+model DebtPayment {
+  id             String          @id @default(cuid())
+  debtId         String
+  amount         Decimal         @db.Decimal(14, 2)
+  paymentMethod  PaymentMethod
+  paidAt         DateTime        @default(now())
+  note           String?
+  createdAt      DateTime        @default(now())
+  debt           Debt            @relation(fields: [debtId], references: [id], onDelete: Restrict)
+  posTransaction PosTransaction?
+
+  @@index([debtId, paidAt])
+}
+
+model PosTransaction {
+  id                String            @id @default(cuid())
+  transactionNumber String            @unique
+  category          PosCategory
+  service           PosService?
+  amount            Decimal           @db.Decimal(14, 2)
+  serviceCharge     Decimal           @default(0) @db.Decimal(14, 2)
+  total             Decimal           @db.Decimal(14, 2)
+  paymentMethod     PaymentMethod?
+  status            TransactionStatus @default(COMPLETED)
+  debtPaymentId     String?           @unique
+  note              String?
+  createdAt         DateTime          @default(now())
+  updatedAt         DateTime          @updatedAt
+  voidedAt          DateTime?
+  voidReason        String?
+  debtPayment       DebtPayment?      @relation(fields: [debtPaymentId], references: [id], onDelete: Restrict)
+
+  @@index([category, createdAt])
+  @@index([service, createdAt])
+  @@index([status, createdAt])
+}
+
+model PosChargeRule {
+  id            String     @id @default(cuid())
+  service       PosService
+  minimumAmount Decimal    @db.Decimal(14, 2)
+  maximumAmount Decimal?   @db.Decimal(14, 2)
+  serviceCharge Decimal    @db.Decimal(14, 2)
+  active        Boolean    @default(true)
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@index([service, active, minimumAmount])
+}
+
+model AuditLog {
+  id         String          @id @default(cuid())
+  userId     String?
+  entityType AuditEntityType
+  entityId   String
+  action     AuditAction
+  reason     String?
+  beforeData Json?
+  afterData  Json?
+  createdAt  DateTime        @default(now())
+  user       User?           @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([entityType, entityId, createdAt])
+  @@index([createdAt])
+}
